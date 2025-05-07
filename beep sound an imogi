@@ -1,0 +1,208 @@
+// ==UserScript==
+// @name         20 Beeps + Emoji + Zoom Title
+// @namespace    http://tampermonkey.net/
+// @version      5.0
+// @description  Auto submit form, detect second page with beep alert (20x), bold animated title, and emoji favicon for Iran eVisa page 2 detection and alerting system.
+// @author       You
+// @match        https://evisatraveller.mfa.ir/en/request/applyrequest/
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const FORM_SELECTOR = '#register_form';
+    const SUBMIT_BUTTON_ID = 'first_step_submit_btn';
+    const SECOND_PAGE_INPUT_ID = 'id_first_name';
+    const WAITING_CLASS = '.error-section--waiting';
+
+    let soundPlayed = false;
+    let emojiZoomInterval = null;
+    let titleZoomInterval = null;
+    let zoomState = false;
+    let context;
+    let stopRequested = false;
+
+    // 🔴 عنوان جدید "FORM-REG"
+    const shortTitle = "FORM-REG";
+    const emoji = "👨‍✈️";
+
+    function removeOldFavicons() {
+        document.querySelectorAll("link[rel~='icon']").forEach(link => link.remove());
+    }
+
+    function drawEmojiFavicon(size = 44, bgColor = "#FFFFFF", emojiColor = "#000000") {
+        const canvas = document.createElement("canvas");
+        canvas.width = 64;
+        canvas.height = 64;
+        const ctx = canvas.getContext("2d");
+
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.font = `${size}px serif`;
+        ctx.fillStyle = emojiColor;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(emoji, canvas.width / 2, canvas.height / 2);
+
+        const link = document.createElement("link");
+        link.rel = "icon";
+        link.href = canvas.toDataURL("image/png");
+        document.head.appendChild(link);
+    }
+
+    function startEmojiZoom() {
+        if (emojiZoomInterval) return;
+        emojiZoomInterval = setInterval(() => {
+            const fontSize = zoomState ? 38 : 48;
+            zoomState = !zoomState;
+            removeOldFavicons();
+            drawEmojiFavicon(fontSize, "#FFFFFF", "#000000");
+        }, 600);
+    }
+
+    function startTitleZoom() {
+        if (titleZoomInterval) return;
+        titleZoomInterval = setInterval(() => {
+            document.title = shortTitle;
+        }, 800);
+    }
+
+    function playBeepSequence() {
+        try {
+            context = new (window.AudioContext || window.webkitAudioContext)();
+            stopRequested = false;
+
+            for (let i = 0; i < 60; i++) { // 60 beep (around 30 seconds)
+                const time = i * 0.5;
+                const osc = context.createOscillator();
+                const gain = context.createGain();
+
+                osc.type = "square";
+                osc.frequency.setValueAtTime(880, context.currentTime + time);
+                osc.connect(gain);
+                gain.connect(context.destination);
+
+                osc.start(context.currentTime + time);
+                osc.stop(context.currentTime + time + 0.3); // 0.3 seconds per beep
+
+                if (stopRequested) {
+                    osc.disconnect();
+                    break;
+                }
+            }
+        } catch (e) {
+            console.error("Beep sequence error:", e);
+        }
+    }
+
+    function stopBeepSequence() {
+        stopRequested = true;
+        if (context) {
+            context.close();
+            context = null;
+        }
+        const btn = document.getElementById("stopBeepBtn");
+        if (btn) btn.remove();
+    }
+
+    function addStopButton() {
+        const btn = document.createElement("button");
+        btn.id = "stopBeepBtn";
+        btn.textContent = "🔇 توقف صدا";
+
+        // 🌟 Styling the button
+        Object.assign(btn.style, {
+            position: "fixed",
+            bottom: "20px",
+            right: "20px",
+            padding: "12px 22px",
+            fontSize: "16px",
+            fontWeight: "bold",
+            fontFamily: "Arial, sans-serif",
+            backgroundColor: "#ff4444",
+            color: "#fff",
+            border: "none",
+            borderRadius: "10px",
+            boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+            cursor: "pointer",
+            zIndex: "9999",
+            transition: "transform 0.2s ease, background-color 0.2s ease"
+        });
+
+        // 🔁 Hover effect
+        btn.onmouseenter = () => {
+            btn.style.backgroundColor = "#cc0000";
+            btn.style.transform = "scale(1.05)";
+        };
+        btn.onmouseleave = () => {
+            btn.style.backgroundColor = "#ff4444";
+            btn.style.transform = "scale(1)";
+        };
+
+        btn.onclick = stopBeepSequence;
+        document.body.appendChild(btn);
+    }
+
+    function autoSubmitForm() {
+        const form = document.querySelector(FORM_SELECTOR);
+        if (form) {
+            form.setAttribute("target", "_self");
+            const submitBtn = document.getElementById(SUBMIT_BUTTON_ID);
+            if (submitBtn) submitBtn.click();
+        }
+    }
+
+    function detectSecondPage() {
+        const input = document.getElementById(SECOND_PAGE_INPUT_ID);
+        const agencyWarning = document.querySelector("strong");
+
+        if (input || (agencyWarning && agencyWarning.textContent.includes("برای این ملیت، آژانس های مسافرتی"))) {
+            if (!soundPlayed) {
+                soundPlayed = true;
+
+                // Change browser theme color to yellow
+                const metaTag = document.createElement("meta");
+                metaTag.name = "theme-color";
+                metaTag.content = "#FFD700";
+                document.head.appendChild(metaTag);
+
+                // Title and emoji change
+                document.title = shortTitle;
+                startTitleZoom();
+                removeOldFavicons();
+                drawEmojiFavicon(44, "#FFFFFF", "#000000");
+                startEmojiZoom();
+
+                // Play beep sound sequence
+                playBeepSequence();
+                addStopButton();
+            }
+        }
+    }
+
+    function checkAndReload() {
+        if (!document.querySelector(FORM_SELECTOR) && !document.querySelector(SECOND_PAGE_INPUT_ID)) {
+            const waiting = document.querySelector(WAITING_CLASS);
+            if (!waiting) {
+                setTimeout(() => {
+                    location.reload();
+                }, 300);
+            }
+        }
+    }
+
+    // 🔴 استایل "FORM-REG" بولد
+    const tapBar = document.querySelector('.tapBarClass'); // تغییر دهید اگر کلاس دیگری دارد
+    if (tapBar) {
+        tapBar.style.fontWeight = 'bold';
+        tapBar.textContent = 'FORM-REG';
+    }
+
+// 🔁 تشخیص آنی تغییرات برای ورود به صفحه دوم
+const observer = new MutationObserver(() => {
+    detectSecondPage();
+});
+observer.observe(document.body, { childList: true, subtree: true });
+})();
